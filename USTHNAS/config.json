@@ -6,7 +6,10 @@
   "Shuffle": true,
   "MaxRunningTasks": 4,
   "MaxRetries": 3,
-  "RandomDelay": [ 1, 10 ],
+  "RandomDelay": [
+    1,
+    10
+  ],
   "ExpireIn": 0,
   "SignInConfigs": [
     {
@@ -18,8 +21,8 @@
       "CollegeId": "1365853906458521620",
       "UserAgent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.50(0x1800323b) NetType/4G Language/zh_CN MiniProgramEnv/ios",
       "Position": [
-        126.65892872841522,
-        45.820275900282255
+        126.659091,
+        45.820241
       ],
       "TimeSpan": [
         21,
@@ -37,8 +40,8 @@
       "CollegeId": "1365853906458521620",
       "UserAgent": "Mozilla/5.0 (Linux; Android 12; ELS-AN00 Build/HUAWEIELS-AN00; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/126.0.6478.188 Mobile Safari/537.36 XWEB/1260117 MMWEBSDK/20240501 MMWEBID/265 MicroMessenger/8.0.50.2701(0x28003259) WeChat/arm64 Weixin NetType/5G Language/zh_CN ABI/arm64 MiniProgramEnv/android",
       "Position": [
-        126.642464,
-        45.756982
+        126.659091,
+        45.820241
       ],
       "TimeSpan": [
         21,

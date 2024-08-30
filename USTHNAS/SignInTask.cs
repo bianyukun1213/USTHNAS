@@ -549,7 +549,7 @@ namespace USTHNAS
                     OnSkip?.Invoke(this, Error.Ok);
                     return;
                 }
-                if (info.IsPositionValid)
+                if (!info.IsPositionValid)
                 {
                     _logger.Info($"{GetLogPrefix()}：不在学校要求的签到范围内，无法签到，将跳过。");
                     _status = TaskStatus.Skipped;
