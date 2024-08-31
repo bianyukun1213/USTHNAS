@@ -539,12 +539,12 @@ namespace USTHNAS
                         return;
                     }
                     // 系统时间转北京时间（服务器时间）。
-                    DateTimeOffset cst = DateTimeOffset.UtcNow + TimeSpan.FromHours(8);
+                    DateTimeOffset cst = curDateTime + TimeSpan.FromHours(8);
                     string[] strStart = signInInfo.StartTime.Split(':');
                     string[] strEnd = signInInfo.EndTime.Split(':');
                     int startTime = int.Parse(strStart[0]) * 60 + int.Parse(strStart[1]);
                     int endTime = int.Parse(strEnd[0]) * 60 + int.Parse(strEnd[1]);
-                    int curTime = curDateTime.Hour * 60 + curDateTime.Minute;
+                    int curTime = cst.Hour * 60 + cst.Minute;
                     if (curTime < startTime || curTime > endTime)
                     {
                         _logger.Info($"{GetLogPrefix()}：不在学校要求的签到时间段内，无法签到，将跳过。");
