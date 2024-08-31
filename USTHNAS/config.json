@@ -14,6 +14,7 @@
   "SignInConfigs": [
     {
       "Enable": true,
+      "Force": false,
       "Name": "姓名或昵称，选填，留空则从接口获取",
       "Description": "注释，选填",
       "LoginAccount": "登录账号（学号）",
@@ -33,6 +34,7 @@
     },
     {
       "Enable": true,
+      "Force": false,
       "Name": "李四",
       "Description": "寝室老六",
       "LoginAccount": "登录账号 2",

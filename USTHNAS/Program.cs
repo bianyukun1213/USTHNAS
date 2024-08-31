@@ -178,7 +178,7 @@ try
     foreach (SignInConfig conf in Config.SignInConfigs)
     {
         logger.Debug($"解析签到配置 {conf}……");
-        string getSignInConfigSkippedStr(string reason)
+        string getSignInConfigStrPrefix()
         {
             string nameAndDesc = string.Empty;
             string name = conf.Name ?? string.Empty;
@@ -194,7 +194,11 @@ try
                 if (!string.IsNullOrEmpty(description.Trim()))
                     nameAndDesc += description.Trim();
             }
-            return $"第 {Config.SignInConfigs.IndexOf(conf) + 1} 条签到配置{(!string.IsNullOrEmpty(nameAndDesc) ? "（" + nameAndDesc + "）" : string.Empty)}{reason}，将跳过解析。";
+            return $"第 {Config.SignInConfigs.IndexOf(conf) + 1} 条签到配置{(!string.IsNullOrEmpty(nameAndDesc) ? "（" + nameAndDesc + "）" : string.Empty)}";
+        }
+        string getSignInConfigSkippedStr(string reason)
+        {
+            return $"{getSignInConfigStrPrefix()}{reason}，跳过解析。";
         }
         if (!conf.Enable)
         {
@@ -252,13 +256,20 @@ try
             logger.Warn(getSignInConfigSkippedStr("签到时间段格式错误"));
             continue;
         }
-        int confBegTime = conf.TimeSpan[0] * 60 + conf.TimeSpan[1];
-        int confEndTime = conf.TimeSpan[2] * 60 + conf.TimeSpan[3];
-        int curTime = curDateTime.Hour * 60 + curDateTime.Minute;
-        if (curTime < confBegTime || curTime > confEndTime)
+        if (!conf.Force)
         {
-            logger.Info(getSignInConfigSkippedStr("签到时间段不包含当前时间"));
-            continue;
+            int confBegTime = conf.TimeSpan[0] * 60 + conf.TimeSpan[1];
+            int confEndTime = conf.TimeSpan[2] * 60 + conf.TimeSpan[3];
+            int curTime = curDateTime.Hour * 60 + curDateTime.Minute;
+            if (curTime < confBegTime || curTime > confEndTime)
+            {
+                logger.Info(getSignInConfigSkippedStr("签到时间段不包含当前时间"));
+                continue;
+            }
+        }
+        else
+        {
+            logger.Info($"{getSignInConfigStrPrefix()}已启用强制签到，跳过签到时间段检查。");
         }
         if (!accountStatusCache.TryGetValue(conf.LoginAccount, out StatusCache sc))
             sc = new StatusCache();
@@ -284,7 +295,8 @@ try
         //    );
         #endregion
 
-        SignInTask task = new(conf.Name ?? string.Empty,
+        SignInTask task = new(conf.Force,
+                              conf.Name ?? string.Empty,
                               conf.Description ?? string.Empty,
                               sc.Account,
                               conf.LoginAccount,
@@ -490,7 +502,9 @@ if (tasksSkipped > 0)
         logger.Info($"{item.GetLogPrefix()}：{item.StatusText}。");
     }
 }
-if (tasksSkipped > 0)
+if (tasksComplete > 0)
+    logger.Info($"----完成（{tasksComplete}/{tasks.Count}）----");
+else if (tasksSkipped > 0)
     logger.Info("--------------");
 else if (tasksAborted > 0)
     logger.Warn("--------------");

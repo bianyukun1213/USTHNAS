@@ -5,6 +5,7 @@ namespace USTHNAS
     internal struct SignInConfig
     {
         public bool Enable { get; set; }
+        public bool Force { get; set; }
         public string Name { get; set; }
         public string Description { get; set; }
         public string LoginAccount { get; set; }

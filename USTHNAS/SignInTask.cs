@@ -123,6 +123,7 @@ namespace USTHNAS
         private TaskStatus _status;
         private string _statusText;
 
+        private readonly bool _forced = false;
         private string _name = string.Empty;
         private string _description = string.Empty; // 不要只读。
         private string _account = string.Empty; // 实际的用户名，可通过接口获取，对应 JWT 中 username。
@@ -165,6 +166,7 @@ namespace USTHNAS
         public TaskStatus Status { get { return _status; } }
         public string StatusText { get { return _statusText; } }
 
+        public bool Forced { get { return _forced; } }
         public string Name { get { return _name; } }
         public string Description { get { return _description; } }
         public string Account { get { return _account; } }
@@ -188,6 +190,7 @@ namespace USTHNAS
         //public Device Device { get { return _device; } }
 
         public SignInTask(
+            bool force,
             string name,
             string description,
             string account,
@@ -213,6 +216,7 @@ namespace USTHNAS
             _status = TaskStatus.Waiting;
             _statusText = "等待";
 
+            _forced = force;
             _name = name;
             _description = description;
             _account = account;
@@ -291,12 +295,13 @@ namespace USTHNAS
                 DateTimeOffset curDateTime = DateTimeOffset.UtcNow;
                 long curTimestamp = curDateTime.ToUnixTimeSeconds();
                 DateTimeOffset lastSuccessDateTime = DateTimeOffset.FromUnixTimeSeconds(_lastSuccess);
-                if (Config.ExpireIn == -1 ||
+                if (!_forced &&
+                    (Config.ExpireIn == -1 ||
                     (curDateTime.Date == lastSuccessDateTime.Date &&
                     curTimestamp - _lastSuccess > 0 &&
-                    curTimestamp - _lastSuccess < Config.ExpireIn))
+                    curTimestamp - _lastSuccess < Config.ExpireIn)))
                 {
-                    _logger.Info($"{GetLogPrefix()}：{Config.ExpireIn} 秒内曾成功签到，将跳过。");
+                    _logger.Info($"{GetLogPrefix()}：{Config.ExpireIn} 秒内曾成功签到，且未启用强制签到，将跳过。");
                     _status = TaskStatus.Skipped;
                     _statusText = $"{Config.ExpireIn} 秒内曾成功签到";
                     _logger.Debug($"{GetLogPrefix()}：跳过运行。");
@@ -452,48 +457,50 @@ namespace USTHNAS
                 bool loginPerformed = false;
                 if (string.IsNullOrEmpty(_account) || string.IsNullOrEmpty(_jwt))
                 {
-                    string[] loginRtn = await LogIn(_loginAccount, _password, _collegeId);
+                    var (loginInfo, loginMsg) = await LogIn(_loginAccount, _password, _collegeId);
                     loginPerformed = true;
-                    if (loginRtn.Length != 2)
+                    if (loginInfo.Length != 2)
                     {
                         _account = _jwt = string.Empty;
                         _status = TaskStatus.Aborted;
-                        _statusText = "登录失败";
+                        _statusText = $"登录失败：{loginMsg}";
                         OnError?.Invoke(this, Error.LoginFailed);
                         return;
                     }
-                    _account = loginRtn[0];
-                    _jwt = loginRtn[1];
+                    _account = loginInfo[0];
+                    _jwt = loginInfo[1];
                 }
                 else
                 {
                     _logger.Info($"{GetLogPrefix()}：读取到 JWT，跳过登录。");
                 }
-                _user = await GetUserBasicInfo();
+                var (userInfo, getUserInfoMsg) = await GetUserBasicInfo();
+                _user = userInfo;
                 if (string.IsNullOrEmpty(_user.StudentId))
                 {
                     if (!loginPerformed)
                     {
                         _logger.Warn($"{GetLogPrefix()}：获取用户信息时认证失败，JWT 可能已过期，将重新登录。");
-                        string[] loginRtn = await LogIn(_loginAccount, _password, _collegeId);
+                        var (loginInfo, loginMsg) = await LogIn(_loginAccount, _password, _collegeId);
                         loginPerformed = true;
-                        if (loginRtn.Length != 2)
+                        if (loginInfo.Length != 2)
                         {
                             _account = _jwt = string.Empty;
                             _status = TaskStatus.Aborted;
-                            _statusText = "登录失败";
+                            _statusText = $"登录失败：{loginMsg}";
                             OnError?.Invoke(this, Error.LoginFailed);
                             return;
                         }
-                        _account = loginRtn[0];
-                        _jwt = loginRtn[1];
-                        _user = await GetUserBasicInfo();
+                        _account = loginInfo[0];
+                        _jwt = loginInfo[1];
+                        var (userInfoNew, getUserInfoMsgNew) = await GetUserBasicInfo();
+                        _user = userInfoNew;
                     }
                     else
                     {
                         _account = _jwt = string.Empty;
                         _status = TaskStatus.Aborted;
-                        _statusText = "获取用户信息失败";
+                        _statusText = $"获取用户信息失败：{getUserInfoMsg}";
                         OnError?.Invoke(this, Error.UserInvalid);
                         return;
                     }
@@ -502,61 +509,64 @@ namespace USTHNAS
                     _name = _user.Name;
                 if (string.IsNullOrEmpty(_collegeId) && !string.IsNullOrEmpty(_user.CollegeId))
                     _collegeId = _user.CollegeId;
-                SignInInfo info = await GetSignInInfo(_position, 1);
-                // 在 StartTime、EndTime 判断之前。
-                if (!info.IsInTheList)
+                if (!_forced)
                 {
-                    _logger.Info($"{GetLogPrefix()}：无需签到，将跳过。");
-                    _status = TaskStatus.Skipped;
-                    _statusText = "无需签到";
-                    _logger.Debug($"{GetLogPrefix()}：跳过运行。");
-                    OnSkip?.Invoke(this, Error.Ok);
-                    return;
+                    var (signInInfo, getSignInInfoMsg) = await GetSignInInfo(_position, 1);
+                    // 在 StartTime、EndTime 判断之前。
+                    if (!signInInfo.IsInTheList)
+                    {
+                        _logger.Info($"{GetLogPrefix()}：无需签到，将跳过。");
+                        _status = TaskStatus.Skipped;
+                        _statusText = "无需签到，因为不在签到名单中";
+                        _logger.Debug($"{GetLogPrefix()}：跳过运行。");
+                        OnSkip?.Invoke(this, Error.Ok);
+                        return;
+                    }
+                    if (string.IsNullOrEmpty(signInInfo.StartTime) || string.IsNullOrEmpty(signInInfo.EndTime))
+                    {
+                        _status = TaskStatus.Aborted;
+                        _statusText = $"获取签到信息失败：{getSignInInfoMsg}";
+                        OnError?.Invoke(this, Error.SignInInfoInvalid);
+                        return;
+                    }
+                    if (signInInfo.HasSignedIn)
+                    {
+                        _logger.Info($"{GetLogPrefix()}：已签到，将跳过。");
+                        _status = TaskStatus.Skipped;
+                        _statusText = "已签到";
+                        _logger.Debug($"{GetLogPrefix()}：跳过运行。");
+                        OnSkip?.Invoke(this, Error.Ok);
+                        return;
+                    }
+                    // 系统时间转北京时间（服务器时间）。
+                    DateTimeOffset cst = DateTimeOffset.UtcNow + TimeSpan.FromHours(8);
+                    string[] strStart = signInInfo.StartTime.Split(':');
+                    string[] strEnd = signInInfo.EndTime.Split(':');
+                    int startTime = int.Parse(strStart[0]) * 60 + int.Parse(strStart[1]);
+                    int endTime = int.Parse(strEnd[0]) * 60 + int.Parse(strEnd[1]);
+                    int curTime = curDateTime.Hour * 60 + curDateTime.Minute;
+                    if (curTime < startTime || curTime > endTime)
+                    {
+                        _logger.Info($"{GetLogPrefix()}：不在学校要求的签到时间段内，无法签到，将跳过。");
+                        _status = TaskStatus.Skipped;
+                        _statusText = "无法签到，因为不在签到时间段内";
+                        _logger.Debug($"{GetLogPrefix()}：跳过运行。");
+                        OnSkip?.Invoke(this, Error.Ok);
+                        return;
+                    }
+                    if (!signInInfo.IsPositionValid)
+                    {
+                        _logger.Info($"{GetLogPrefix()}：不在学校要求的签到范围内，无法签到，将跳过。");
+                        _status = TaskStatus.Skipped;
+                        _statusText = "无法签到，因为不在签到范围内";
+                        _logger.Debug($"{GetLogPrefix()}：跳过运行。");
+                        OnSkip?.Invoke(this, Error.Ok);
+                        return;
+                    }
                 }
-                if (string.IsNullOrEmpty(info.StartTime) || string.IsNullOrEmpty(info.EndTime))
+                else
                 {
-                    _status = TaskStatus.Aborted;
-                    _statusText = "获取签到信息失败";
-                    OnError?.Invoke(this, Error.SignInInfoInvalid);
-                    return;
-                }
-                if (info.HasSignedIn)
-                {
-                    _logger.Info($"{GetLogPrefix()}：已签到，将跳过。");
-                    _status = TaskStatus.Skipped;
-                    _statusText = "已签到";
-                    _logger.Debug($"{GetLogPrefix()}：跳过运行。");
-                    OnSkip?.Invoke(this, Error.Ok);
-                    return;
-                }
-                // 系统时间转北京时间（服务器时间）。
-                DateTimeOffset cst = DateTimeOffset.UtcNow + TimeSpan.FromHours(8);
-                string[] strStart = info.StartTime.Split(':');
-                string[] strEnd = info.EndTime.Split(':');
-                int startHour = int.Parse(strStart[0]);
-                int startMinute = int.Parse(strStart[1]);
-                int endHour = int.Parse(strEnd[0]);
-                int endMinute = int.Parse(strEnd[1]);
-                if (cst.Hour < startHour ||
-                    cst.Hour > endHour ||
-                    (cst.Hour == startHour && cst.Minute < startMinute) ||
-                    (cst.Hour == endHour && cst.Minute > endMinute))
-                {
-                    _logger.Info($"{GetLogPrefix()}：不在学校要求的签到时间段内，无法签到，将跳过。");
-                    _status = TaskStatus.Skipped;
-                    _statusText = "无法签到，因为不在签到时间段内";
-                    _logger.Debug($"{GetLogPrefix()}：跳过运行。");
-                    OnSkip?.Invoke(this, Error.Ok);
-                    return;
-                }
-                if (!info.IsPositionValid)
-                {
-                    _logger.Info($"{GetLogPrefix()}：不在学校要求的签到范围内，无法签到，将跳过。");
-                    _status = TaskStatus.Skipped;
-                    _statusText = "无法签到，因为不在签到范围内";
-                    _logger.Debug($"{GetLogPrefix()}：跳过运行。");
-                    OnSkip?.Invoke(this, Error.Ok);
-                    return;
+                    _logger.Info($"{GetLogPrefix()}：已启用强制签到，跳过条件检查。");
                 }
                 // 延迟。
                 if (Config.RandomDelay![0] != 0)
@@ -567,11 +577,11 @@ namespace USTHNAS
                     _logger.Info($"{GetLogPrefix()}：延迟 {sec} 秒签到……");
                     await Task.Delay(sec * 1000);
                 }
-                bool signInStatus = await SignIn(_user.CollegeId!, User.StudentId, 1, _position);
-                if (!signInStatus)
+                var (signInRes, signInMsg) = await SignIn(_user.CollegeId!, User.StudentId, 1, _position);
+                if (!signInRes)
                 {
                     _status = TaskStatus.Aborted;
-                    _statusText = "签到失败";
+                    _statusText = $"签到失败：{signInMsg}";
                     OnError?.Invoke(this, Error.SignInFailed);
                     return;
                 }
@@ -849,7 +859,7 @@ namespace USTHNAS
         #endregion
 
         // Login 名词，Log in 动词短语。
-        private async Task<string[]> LogIn(string loginAccount, string password, string collegeId)
+        private async Task<(string[] loginInfo, string message)> LogIn(string loginAccount, string password, string collegeId)
         {
             _logger.Info($"{GetLogPrefix()}：登录……");
             var reqLogIn = USTHNightAttendanceSignInApiEntry.LOG_IN
@@ -859,22 +869,23 @@ namespace USTHNAS
             _logger.Debug($"{GetLogPrefix()}：发送请求：{reqLogIn.Url}，logInBody：{JsonSerializer.Serialize(logInBody, ServiceOptions.jsonSerializerOptions)}……");
             string logInContent = await reqLogIn.PostJsonAsync(logInBody).ReceiveString();
             _logger.Debug($"{GetLogPrefix()}：收到登录响应：{logInContent}。");
-            USTHNightAttendanceSignInApiRes loginRes = ParseUSTHNightAttendanceSignInApiRes(JsonNode.Parse(logInContent!)!);
-            if (loginRes.Code != 10000)
+            USTHNightAttendanceSignInApiRes logInRes = ParseUSTHNightAttendanceSignInApiRes(JsonNode.Parse(logInContent!)!);
+            if (logInRes.Code != 10000)
             {
-                _logger.Error($"{GetLogPrefix()}：登录失败，服务端返回消息：{loginRes.Message}。");
-                return [];
+                _logger.Error($"{GetLogPrefix()}：登录失败，服务端返回消息：{logInRes.Message}。");
+                return ([], logInRes.Message);
             }
-            JsonNode loginResData = loginRes.Data;
+            JsonNode loginResData = logInRes.Data;
             if (!loginResData["verifyResult"].Deserialize<bool>())
             {
-                _logger.Error($"{GetLogPrefix()}：验证失败，服务端返回消息：{loginResData["verifyResultMsg"].Deserialize<string>()}。");
-                return [];
+                string msg = loginResData["verifyResultMsg"].Deserialize<string>()!;
+                _logger.Error($"{GetLogPrefix()}：验证失败，服务端返回消息：{msg}。");
+                return ([], msg);
             }
-            return [loginResData["username"].Deserialize<string>()!, loginResData["jwt"].Deserialize<string>()!];
+            return ([loginResData["username"].Deserialize<string>()!, loginResData["jwt"].Deserialize<string>()!], string.Empty);
         }
 
-        private async Task<User> GetUserBasicInfo()
+        private async Task<(User userInfo, string message)> GetUserBasicInfo()
         {
             _logger.Info($"{GetLogPrefix()}：获取用户信息……");
             var reqGetUserBasicInfo = USTHNightAttendanceSignInApiEntry.GET_USER_BASIC_INFO
@@ -889,7 +900,7 @@ namespace USTHNAS
             if (infoRes.Code != 10000)
             {
                 _logger.Error($"{GetLogPrefix()}：获取用户信息失败，服务端返回消息：{infoRes.Message}。");
-                return new();
+                return (new(), infoRes.Message);
             }
             JsonNode infoResData = infoRes.Data;
             User user = new()
@@ -901,10 +912,10 @@ namespace USTHNAS
                 StudentNumber = infoResData["studentNo"].Deserialize<string>()
             };
             _logger.Debug($"{GetLogPrefix()}：解析出用户信息：{user}。");
-            return user;
+            return (user, string.Empty);
         }
 
-        private async Task<SignInInfo> GetSignInInfo(double[] position, int attendanceGroupId)
+        private async Task<(SignInInfo signInInfo, string message)> GetSignInInfo(double[] position, int attendanceGroupId)
         {
             _logger.Info($"{GetLogPrefix()}：获取签到信息……");
             var reqSignInInfo = USTHNightAttendanceSignInApiEntry.GET_SIGN_IN_INFO
@@ -921,10 +932,10 @@ namespace USTHNAS
             {
                 if (infoRes.Message == "您当前不在打卡名单中")
                 {
-                    return new SignInInfo { IsInTheList = false };
+                    return (new SignInInfo { IsInTheList = false }, infoRes.Message);
                 }
                 _logger.Error($"{GetLogPrefix()}：获取签到信息失败，服务端返回消息：{infoRes.Message}。");
-                return new();
+                return (new(), infoRes.Message);
             }
             JsonNode infoResData = infoRes.Data;
             SignInInfo signinInfo = new()
@@ -936,10 +947,10 @@ namespace USTHNAS
                 IsPositionValid = infoResData["clockScope"].Deserialize<int>() != 0,
             };
             _logger.Debug($"{GetLogPrefix()}：解析出签到信息：{signinInfo}。");
-            return signinInfo;
+            return (signinInfo, string.Empty);
         }
 
-        private async Task<bool> SignIn(string collegeId, string studentId, int attendanceGroupId, double[] position)
+        private async Task<(bool result, string message)> SignIn(string collegeId, string studentId, int attendanceGroupId, double[] position)
         {
             _logger.Info($"{GetLogPrefix()}：晚点签到，启动！");
             var reqSignIn = USTHNightAttendanceSignInApiEntry.SIGN_IN
@@ -956,9 +967,9 @@ namespace USTHNAS
             if (signInRes.Code != 10000)
             {
                 _logger.Error($"{GetLogPrefix()}：签到失败，服务端返回消息：{signInRes.Message}。");
-                return false;
+                return (false, signInRes.Message);
             }
-            return true;
+            return (true, string.Empty);
         }
 
     }
